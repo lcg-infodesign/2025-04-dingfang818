@@ -1,27 +1,25 @@
 let outerMargin = 80;
-let dataTable;
+let data;
 let volcanoes = [];
 let filtered = [];
 
 const FILTER_WIDTH = 260;
 
-// 地图图像（本地 WebP）
+// 地图图片
 let mapImg;
 let mapURL = "assets/world.svg";
 
-// 地图经纬度范围
-let mapLeft = -180, mapRight = 180;
-let mapTop = 90, mapBottom = -90;
+// 经纬度范围
+let minLon, maxLon, minLat, maxLat, minElev, maxElev;
 
+// 过滤器
+let filterCountry, filterType, filterStatus;
 
-// preload
 function preload() {
-  dataTable = loadTable("assets/data.csv", "csv", "header");
+  data = loadTable("assets/data.csv", "csv", "header");
   mapImg = loadImage(mapURL);
 }
 
-
-// setup
 function setup() {
   createCanvas(windowWidth, windowHeight);
 
@@ -31,181 +29,212 @@ function setup() {
   createFilterUI();
 }
 
-
 // 解析 CSV 数据
 function parseData() {
-  for (let r of dataTable.rows) {
+  let allLon = [], allLat = [], allElev = [];
+  for (let r of data.rows) {
+    let lat = parseFloat(r.get("Latitude"));
+    let lon = parseFloat(r.get("Longitude"));
+    let elev = parseFloat(r.get("Elevation (m)"));
+    if (isNaN(lat) || isNaN(lon)) continue;
+
+    allLon.push(lon);
+    allLat.push(lat);
+    if (!isNaN(elev)) allElev.push(elev);
+
     volcanoes.push({
-      name: r.get("Name"),
+      name: r.get("Volcano Name"),
       country: r.get("Country"),
-      type: r.get("Type"),
+      type: r.get("TypeCategory"),
       status: r.get("Status"),
-      lat: parseFloat(r.get("Latitude")),
-      lon: parseFloat(r.get("Longitude")),
-      elev: parseFloat(r.get("Elevation"))
+      lat, lon, elev: elev,
+      x: 0, y: 0, radius: 0, color: colorByType(r.get("TypeCategory"))
     });
+  }
+
+  minLon = Math.min(...allLon);
+  maxLon = Math.max(...allLon);
+  minLat = Math.min(...allLat);
+  maxLat = Math.max(...allLat);
+  minElev = allElev.length > 0 ? Math.min(...allElev) : 0;
+  maxElev = allElev.length > 0 ? Math.max(...allElev) : 8000;
+
+  // 映射 x, y, radius
+  for (let v of volcanoes) {
+    v.x = map(v.lon, minLon, maxLon, FILTER_WIDTH + outerMargin, width - outerMargin);
+    v.y = map(v.lat, minLat, maxLat, height - outerMargin, outerMargin);
+    v.radius = v.elev ? map(v.elev, minElev, maxElev, 3, 15) : 5;
   }
 }
 
-
-// 左侧过滤器 UI
+// 创建左侧过滤器
 function createFilterUI() {
-
-  // 背景层
+  // 背景
   let bg = createDiv("");
   bg.position(0, 0);
   bg.size(FILTER_WIDTH, windowHeight);
   bg.style("background", "#03071A");
   bg.style("z-index", "-1");
 
+  let yPos = 30;
+
   // 标题
   let title = createDiv("FILTERS");
-  title.position(20, 20);
+  title.position(20, yPos);
   title.style("color", "#fff");
   title.style("font-size", "20px");
+  yPos += 40;
 
-  // --- Country ---
-  createSpan("Country").position(20, 80).style("color", "#ccc");
+  // 国家过滤器
+  createSpan("Country").position(20, yPos).style("color", "#ccc");
+  yPos += 25;
   filterCountry = createSelect();
-  filterCountry.position(20, 105);
-  filterCountry.style("width", "150px");  // ✔变窄
+  filterCountry.position(20, yPos);
+  filterCountry.style("width", "200px");
   filterCountry.option("All");
-
-  let countries = [...new Set(volcanoes.map(v => v.country))].sort();
-  countries.forEach(c => filterCountry.option(c));
+  [...new Set(volcanoes.map(v => v.country))].sort().forEach(c => filterCountry.option(c));
   filterCountry.changed(applyFilters);
+  yPos += 50;
 
-  // --- Type ---
-  createSpan("Type").position(20, 160).style("color", "#ccc");
+  // 类型过滤器
+  createSpan("Type").position(20, yPos).style("color", "#ccc");
+  yPos += 25;
   filterType = createSelect();
-  filterType.position(20, 185);
+  filterType.position(20, yPos);
   filterType.style("width", "200px");
   filterType.option("All");
-
-  let types = [...new Set(volcanoes.map(v => v.type))].sort();
-  types.forEach(t => filterType.option(t));
+  [...new Set(volcanoes.map(v => v.type))].sort().forEach(t => filterType.option(t));
   filterType.changed(applyFilters);
+  yPos += 50;
 
-  // --- Status ---
-  createSpan("Status").position(20, 240).style("color", "#ccc");
+  // 状态过滤器
+  createSpan("Status").position(20, yPos).style("color", "#ccc");
+  yPos += 25;
   filterStatus = createSelect();
-  filterStatus.position(20, 265);
+  filterStatus.position(20, yPos);
   filterStatus.style("width", "200px");
   filterStatus.option("All");
-
-  let statuses = [...new Set(volcanoes.map(v => v.status))].sort();
-  statuses.forEach(s => filterStatus.option(s));
+  [...new Set(volcanoes.map(v => v.status))].sort().forEach(s => filterStatus.option(s));
   filterStatus.changed(applyFilters);
 }
 
-
-// 过滤逻辑
+// 应用过滤器
 function applyFilters() {
   let c = filterCountry.value();
   let t = filterType.value();
   let s = filterStatus.value();
 
-  filtered = volcanoes.filter(v => {
-    return (c === "All" || v.country === c) &&
-           (t === "All" || v.type === t) &&
-           (s === "All" || v.status === s);
-  });
+  filtered = volcanoes.filter(v =>
+    (c === "All" || v.country === c) &&
+    (t === "All" || v.type === t) &&
+    (s === "All" || v.status === s)
+  );
 }
-
 
 // draw
 function draw() {
-  background("#050A1F");  // ✔深蓝背景
+  background("#050A1F");
 
-  let x = FILTER_WIDTH;
-  let w = width - FILTER_WIDTH;
-  let h = height;
+  // 绘制地图
+  image(mapImg, FILTER_WIDTH, 0, width - FILTER_WIDTH, height);
 
-  // 地图
-  image(mapImg, x, 0, w, h);
+  // 绘制火山
+  let hovered = null;
+  for (let v of filtered) {
+    let d = dist(mouseX, mouseY, v.x, v.y);
+    let highlight = d < Math.max(4, v.radius);
+    drawVolcano(v.x, v.y, v.radius, v.color, highlight);
+    if (highlight) hovered = v;
+  }
 
-  // 火山点
-  drawVolcanoes(x, w, h);
+  // tooltip + 经纬度
+  if (hovered) {
+    cursor("pointer");
+    drawTooltip(hovered.x + 10, hovered.y - 30,
+      `${hovered.name}\n${hovered.type}\n${hovered.country}\n${hovered.elev ? Math.round(hovered.elev) + " m" : "N/A"}`
+    );
+    textAlign(RIGHT, BOTTOM);
+    fill(255);
+    textSize(14);
+    text(`Lon: ${hovered.lon}°, Lat: ${hovered.lat}°`, width - 20, height - 10);
+  } else cursor("default");
+
+  // 标题
+  fill(255);
+  textSize(24);
+  textAlign(CENTER, TOP);
+  text("🌋 Volcano Dataset — Map + Glyph", width / 2, 20);
 
   // 图例
   drawLegend();
 }
 
-
-// 绘制火山点
-function drawVolcanoes(x, w, h) {
+// 绘制单个火山
+function drawVolcano(x, y, radius, c, highlight) {
   noStroke();
-
-  for (let v of filtered) {
-    let px = map(v.lon, -180, 180, x, x + w);
-    let py = map(v.lat, -90, 90, h, 0);
-
-    fill(colorByType(v.type));
-    ellipse(px, py, 6);   // ✔ 小点
+  fill(c);
+  ellipse(x, y, radius);
+  if (highlight) {
+    stroke(255);
+    strokeWeight(2);
+    noFill();
+    ellipse(x, y, radius + 6);
+    noStroke();
   }
 }
 
+// tooltip
+function drawTooltip(px, py, txt) {
+  push();
+  textAlign(LEFT, TOP);
+  textSize(13);
+  let lines = txt.split("\n");
+  let w = 180, h = lines.length * 18 + 8;
+  fill(10, 10, 10, 230);
+  noStroke();
+  rect(px, py, w, h, 6);
+  fill(255);
+  for (let i = 0; i < lines.length; i++) text(lines[i], px + 8, py + 5 + i * 18);
+  pop();
+}
 
-// =========================
 // 图例
-// =========================
 function drawLegend() {
   let legendY = height - 36;
   let startX = FILTER_WIDTH + 40;
-
-  let types = getTypePalette();
-
+  let types = [
+    ["Stratovolcano", color("#A6CDED")],
+    ["Shield", color("#CD5A5C")],
+    ["Complex", color("#F3C2B6")],
+    ["Submarine", color("#893F9A")],
+    ["Lava Dome", color("#FCFDF9")],
+    ["Other", color("#ADD5C4")]
+  ];
   textSize(12);
   textAlign(LEFT, CENTER);
-
   for (let i = 0; i < types.length; i++) {
-    let x = startX + i * 150;
-
-    fill(types[i].col);
+    let x = startX + i * 140;
+    fill(types[i][1]);
     noStroke();
     ellipse(x, legendY, 10);
-
     fill(220);
-    text(types[i].label, x + 16, legendY);
+    text(types[i][0], x + 16, legendY);
   }
 }
-
-
-// =========================
-// 返回当前过滤后的类型颜色
-// =========================
-function getTypePalette() {
-  let typeMap = new Map();
-  for (let v of filtered) {
-    if (!v.type) continue;
-    if (!typeMap.has(v.type)) typeMap.set(v.type, colorByType(v.type));
-  }
-  return Array.from(typeMap.entries()).map(e => ({
-    label: e[0],
-    col: e[1]
-  }));
-}
-
-
 
 function colorByType(type) {
-  if (!type) return color("#AAB6C8");
-
+  if (!type) return color("#ADD5C4");
   let t = type.toLowerCase();
-
-  if (t.includes("strato"))       return color("#A6CDED"); // 淡蓝
-  if (t.includes("shield"))       return color("#CD5A5C"); // 红
-  if (t.includes("complex"))      return color("#F3C2B6"); // 粉
-  if (t.includes("submarine"))    return color("#893F9A"); // 紫
-  if (t.includes("lava"))         return color("#FCFDF9"); // 白
-
-  return color("#AAB6C8"); // 默认灰
+  if (t.includes("strato")) return color("#A6CDED");
+  if (t.includes("shield")) return color("#CD5A5C");
+  if (t.includes("complex")) return color("#F3C2B6");
+  if (t.includes("submarine")) return color("#893F9A");
+  if (t.includes("lava")) return color("#FCFDF9");
+  return color("#ADD5C4");
 }
 
-
-// =========================
-// 自适应
-// =========================
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
+  parseData();
+  applyFilters();
 }
